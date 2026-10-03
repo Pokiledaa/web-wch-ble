@@ -1,10 +1,11 @@
 // Caches the app shell so the installed app opens without a network connection.
 // Bump CACHE whenever a file below changes.
-const CACHE = 'ch582-led-v5';
+const CACHE = 'ch582-led-v6';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'snake/', 'snake/index.html', 'snake/manifest.webmanifest',
   'maze/', 'maze/index.html', 'maze/manifest.webmanifest',
-  'racing/', 'racing/index.html', 'racing/manifest.webmanifest'];
+  'racing/', 'racing/index.html', 'racing/manifest.webmanifest',
+  'shooter/', 'shooter/index.html', 'shooter/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));

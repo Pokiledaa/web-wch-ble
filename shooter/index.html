@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#10161c">
-<title>CH582 Maze</title>
+<title>CH582 Shooter</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <style>
-  /* Layout: one centred column; level on top, a tilt indicator in the middle, connection at the bottom. */
+  /* Layout: one centred column; score and lives on top, one large fire button in the middle, connection at the bottom. */
   :root {
     --bg: #eef1f3;
     --panel: #ffffff;
@@ -79,6 +79,13 @@
 
   .tilt {
     position: relative;
+    padding: 0;
+    color: var(--muted);
+    font: 650 1.1rem var(--sans);
+    letter-spacing: .08em;
+    cursor: pointer;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
     width: min(62vw, 220px);
     aspect-ratio: 1;
     border-radius: 50%;
@@ -103,6 +110,9 @@
     background: var(--go);
     z-index: 1;
   }
+  .tilt.firing { background: var(--bad); border-color: var(--bad); color: var(--bg); }
+  .tilt:disabled { opacity: .45; }
+  .tilt span { position: absolute; left: 0; right: 0; bottom: 22%; text-align: center; }
   #sensor { margin: 0; color: var(--muted); font-size: .9rem; text-align: center; min-height: 1.45em; }
   .btn.go { background: var(--go); border-color: var(--go); }
 
@@ -126,17 +136,17 @@
 <body>
 <main>
   <header>
-    <h1>CH582 Maze</h1>
+    <h1>CH582 Shooter</h1>
     <p id="status" role="status" aria-live="polite">Not connected</p>
   </header>
 
   <div class="score">
-    <div><span>Level</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
+    <div><span>Score</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
     <strong id="level">0</strong>
   </div>
 
-  <div class="tilt" aria-hidden="true"><div id="dot"></div></div>
-  <p id="sensor">Tilt the phone to roll the ball</p>
+  <button class="tilt" id="fire" type="button" disabled><div id="dot"></div><span>FIRE</span></button>
+  <p id="sensor">Tilt to move, hold the circle to fire</p>
 
   <div class="row">
     <button id="start" class="btn go" type="button" disabled>Start</button>
@@ -148,17 +158,17 @@
 
   <a href="../">LED and brightness controls</a>
   <a href="../snake/">Play Snake</a>
+  <a href="../maze/">Play Tilt Maze</a>
   <a href="../racing/">Play Race</a>
-  <a href="../shooter/">Play Shooter</a>
 </main>
 
 <script>
   const SERVICE = 0xFFE0;
-  const CMD_CHAR = 0xFFE2;   // {command, tilt x, tilt y}: 5 start, 6 tilt, 0 back to the clock
-  const STATE_CHAR = 0xFFE4; // notification {state, level}
+  const CMD_CHAR = 0xFFE2;   // {command, tilt, fire}: 5 start, 6 input, 0 back to the clock
+  const STATE_CHAR = 0xFFE4; // notification {state, score low, score high, lives}
   const TIME_CHAR = 0xFFE5;  // {hour, minute, second}
   const CMD_EXIT = 0, CMD_START = 5, CMD_TILT = 6;
-  const FULL_TILT_DEG = 30;  // this much lean gives full acceleration
+  const FULL_TILT_DEG = 25;  // this much lean gives full steering
   const DEAD_ZONE_DEG = 2;
   const SEND_INTERVAL_MS = 50;
 
@@ -170,10 +180,13 @@
   const levelEl = document.getElementById('level');
   const stateEl = document.getElementById('gameState');
   const dot = document.getElementById('dot');
+  const fireBtn = document.getElementById('fire');
 
   let device = null;
   let cmdChar = null;
   let playing = false;
+  let firing = false;
+  let lastLives = 0;
   let sending = false;
   let wakeLock = null;
 
@@ -195,10 +208,13 @@
     statusEl.classList.toggle('bad', !!bad);
   }
 
-  function showGame(state, level) {
+  function showGame(state, score, lives) {
+    if (playing && lives < lastLives && navigator.vibrate) navigator.vibrate(state === 2 ? 400 : 150);
+    lastLives = lives;
     playing = state === 1;
-    stateEl.textContent = playing ? 'Playing' : 'Idle';
-    levelEl.textContent = level;
+    stateEl.textContent = playing ? 'Lives ' + lives : (state === 2 ? 'Game over' : 'Idle');
+    levelEl.textContent = score;
+    startBtn.textContent = state === 2 ? 'Play again' : 'Start';
   }
 
   function showConnected(connected) {
@@ -206,7 +222,8 @@
     exitBtn.disabled = !connected;
     connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
     connectBtn.classList.toggle('quiet', connected);
-    if (!connected) showGame(0, 0);
+    fireBtn.disabled = !connected;
+    if (!connected) showGame(0, 0, 0);
   }
 
   function onDisconnected() {
@@ -222,8 +239,8 @@
       if (Math.abs(deg) < DEAD_ZONE_DEG) return 0;
       return Math.max(-127, Math.min(127, Math.round(deg / FULL_TILT_DEG * 127)));
     };
-    if (keys.x || keys.y) return { x: keys.x * 90, y: keys.y * 90 };
-    return { x: scale(raw.x - rest.x), y: scale(raw.y - rest.y) };
+    if (keys.x) return { x: keys.x * 127, y: 0 };
+    return { x: scale(raw.x - rest.x), y: 0 }; // steering only uses the left-right axis
   }
 
   window.addEventListener('deviceorientation', (event) => {
@@ -247,7 +264,7 @@
     sending = true;
     const target = cmdChar;
     try {
-      await gatt(() => target.writeValueWithoutResponse(Int8Array.of(CMD_TILT, t.x, t.y)));
+      await gatt(() => target.writeValueWithoutResponse(Int8Array.of(CMD_TILT, t.x, firing ? 1 : 0)));
     } catch (err) {
       /* a dropped tilt packet is harmless, the next one follows in 50 ms */
     } finally {
@@ -269,8 +286,8 @@
   async function start() {
     rest = { x: raw.x, y: raw.y }; // however the phone is held now counts as level
     sensorEl.textContent = haveSensor
-      ? 'Tilt the phone to roll the ball'
-      : 'No tilt sensor found. Use the arrow keys.';
+      ? 'Tilt to move, hold the circle to fire'
+      : 'No tilt sensor found. Use the arrow keys and the space bar.';
     try {
       if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen');
     } catch (err) { /* the screen may dim, the game still works */ }
@@ -304,7 +321,7 @@
       const stateChar = await service.getCharacteristic(STATE_CHAR);
       stateChar.addEventListener('characteristicvaluechanged', (event) => {
         const v = event.target.value;
-        if (v.byteLength >= 2) showGame(v.getUint8(0), v.getUint8(1));
+        if (v.byteLength >= 4) showGame(v.getUint8(0), v.getUint16(1, true), v.getUint8(3));
       });
       await gatt(() => stateChar.startNotifications());
 
@@ -333,14 +350,33 @@
     else connect();
   });
   startBtn.addEventListener('click', start);
+
+  // Fire state goes out straight away instead of waiting for the next 50 ms update
+  function setFiring(on) {
+    if (firing === on) return;
+    firing = on;
+    fireBtn.classList.toggle('firing', on);
+    sendTilt();
+  }
+  fireBtn.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    fireBtn.setPointerCapture(event.pointerId);
+    setFiring(true);
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => {
+    fireBtn.addEventListener(type, () => setFiring(false));
+  });
+  fireBtn.addEventListener('contextmenu', (event) => event.preventDefault());
   exitBtn.addEventListener('click', () => command(CMD_EXIT));
 
   const KEY_AXIS = { ArrowLeft: ['x', -1], ArrowRight: ['x', 1], ArrowUp: ['y', -1], ArrowDown: ['y', 1] };
   window.addEventListener('keydown', (event) => {
+    if (event.key === ' ') { event.preventDefault(); setFiring(true); return; }
     const k = KEY_AXIS[event.key];
     if (k) { event.preventDefault(); keys[k[0]] = k[1]; }
   });
   window.addEventListener('keyup', (event) => {
+    if (event.key === ' ') { setFiring(false); return; }
     const k = KEY_AXIS[event.key];
     if (k && keys[k[0]] === k[1]) keys[k[0]] = 0;
   });
