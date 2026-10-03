@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#10161c">
-<title>CH582 Snake</title>
+<title>CH582 Maze</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <style>
-  /* Layout: one centred column; score on top, a thumb-sized direction pad in the middle, connection at the bottom. */
+  /* Layout: one centred column; level on top, a tilt indicator in the middle, connection at the bottom. */
   :root {
     --bg: #eef1f3;
     --panel: #ffffff;
@@ -77,34 +77,34 @@
   .score strong { font: 650 2rem var(--mono); font-variant-numeric: tabular-nums; }
   #gameState { font-size: .85rem; color: var(--muted); }
 
-  .pad {
-    display: grid;
-    grid-template-columns: repeat(3, min(26vw, 92px));
-    grid-template-rows: repeat(3, min(26vw, 92px));
-    gap: 8px;
-    touch-action: none;
-  }
-  .pad button {
-    border: 1px solid var(--line);
-    border-radius: 16px;
+  .tilt {
+    position: relative;
+    width: min(62vw, 220px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 2px solid var(--line);
     background: var(--panel);
-    color: var(--fg);
-    font-size: 1.8rem;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    touch-action: none;
   }
-  .pad button:active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-  .pad button:disabled { opacity: .4; }
-  #up { grid-area: 1 / 2; } #left { grid-area: 2 / 1; } #right { grid-area: 2 / 3; } #down { grid-area: 3 / 2; }
-  #start {
-    grid-area: 2 / 2;
+  .tilt::before, .tilt::after {
+    content: "";
+    position: absolute;
+    background: var(--line);
+  }
+  .tilt::before { left: 50%; top: 12%; bottom: 12%; width: 1px; }
+  .tilt::after { top: 50%; left: 12%; right: 12%; height: 1px; }
+  #dot {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+    border-radius: 50%;
     background: var(--go);
-    border-color: var(--go);
-    color: var(--bg);
-    font: 650 .95rem var(--sans);
-    letter-spacing: .04em;
+    z-index: 1;
   }
+  #sensor { margin: 0; color: var(--muted); font-size: .9rem; text-align: center; min-height: 1.45em; }
+  .btn.go { background: var(--go); border-color: var(--go); }
 
   .row { width: 100%; display: flex; gap: 10px; }
   .btn {
@@ -126,51 +126,61 @@
 <body>
 <main>
   <header>
-    <h1>CH582 Snake</h1>
+    <h1>CH582 Maze</h1>
     <p id="status" role="status" aria-live="polite">Not connected</p>
   </header>
 
   <div class="score">
-    <div><span>Score</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
-    <strong id="score">0</strong>
+    <div><span>Level</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
+    <strong id="level">0</strong>
   </div>
 
-  <div class="pad" id="pad">
-    <button id="up" type="button" aria-label="Up" disabled>&#9650;</button>
-    <button id="left" type="button" aria-label="Left" disabled>&#9664;</button>
-    <button id="start" type="button" disabled>START</button>
-    <button id="right" type="button" aria-label="Right" disabled>&#9654;</button>
-    <button id="down" type="button" aria-label="Down" disabled>&#9660;</button>
-  </div>
+  <div class="tilt" aria-hidden="true"><div id="dot"></div></div>
+  <p id="sensor">Tilt the phone to roll the ball</p>
 
   <div class="row">
-    <button id="connect" class="btn" type="button">Connect</button>
+    <button id="start" class="btn go" type="button" disabled>Start</button>
     <button id="exit" class="btn quiet" type="button" disabled>Show clock</button>
+  </div>
+  <div class="row">
+    <button id="connect" class="btn" type="button">Connect</button>
   </div>
 
   <a href="../">LED and brightness controls</a>
-  <a href="../maze/">Play Tilt Maze</a>
+  <a href="../snake/">Play Snake</a>
 </main>
 
 <script>
   const SERVICE = 0xFFE0;
-  const CMD_CHAR = 0xFFE2;   // 1 up, 2 right, 3 down, 4 left, 5 start, 0 back to the clock
-  const STATE_CHAR = 0xFFE4; // notification {state, score}
+  const CMD_CHAR = 0xFFE2;   // {command, tilt x, tilt y}: 5 start, 6 tilt, 0 back to the clock
+  const STATE_CHAR = 0xFFE4; // notification {state, level}
   const TIME_CHAR = 0xFFE5;  // {hour, minute, second}
-  const CMD = { up: 1, right: 2, down: 3, left: 4, start: 5, exit: 0 };
-  const STATE_NAMES = ['Idle', 'Playing', 'Game over'];
+  const CMD_EXIT = 0, CMD_START = 5, CMD_TILT = 6;
+  const FULL_TILT_DEG = 30;  // this much lean gives full acceleration
+  const DEAD_ZONE_DEG = 2;
+  const SEND_INTERVAL_MS = 50;
 
   const statusEl = document.getElementById('status');
+  const sensorEl = document.getElementById('sensor');
   const connectBtn = document.getElementById('connect');
+  const startBtn = document.getElementById('start');
   const exitBtn = document.getElementById('exit');
-  const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
   const stateEl = document.getElementById('gameState');
-  const controls = ['up', 'left', 'start', 'right', 'down'].map((id) => document.getElementById(id));
+  const dot = document.getElementById('dot');
 
   let device = null;
   let cmdChar = null;
+  let playing = false;
+  let sending = false;
+  let wakeLock = null;
 
-  // Web Bluetooth allows one GATT operation at a time, so run them one after another.
+  // Raw angles from the phone, the resting angles captured at Start, and keys held on a keyboard
+  let raw = { x: 0, y: 0 };
+  let rest = { x: 0, y: 0 };
+  let haveSensor = false;
+  const keys = { x: 0, y: 0 };
+
   let gattQueue = Promise.resolve();
   function gatt(op) {
     const run = gattQueue.then(op, op);
@@ -183,13 +193,14 @@
     statusEl.classList.toggle('bad', !!bad);
   }
 
-  function showGame(state, score) {
-    stateEl.textContent = STATE_NAMES[state] || 'Idle';
-    scoreEl.textContent = score;
+  function showGame(state, level) {
+    playing = state === 1;
+    stateEl.textContent = playing ? 'Playing' : 'Idle';
+    levelEl.textContent = level;
   }
 
   function showConnected(connected) {
-    controls.forEach((b) => { b.disabled = !connected; });
+    startBtn.disabled = !connected;
     exitBtn.disabled = !connected;
     connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
     connectBtn.classList.toggle('quiet', connected);
@@ -200,19 +211,68 @@
     cmdChar = null;
     showConnected(false);
     setStatus('Disconnected');
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   }
 
-  async function send(name) {
+  // Tilt in -127..127 for each axis, relative to how the phone was held at Start
+  function currentTilt() {
+    const scale = (deg) => {
+      if (Math.abs(deg) < DEAD_ZONE_DEG) return 0;
+      return Math.max(-127, Math.min(127, Math.round(deg / FULL_TILT_DEG * 127)));
+    };
+    if (keys.x || keys.y) return { x: keys.x * 90, y: keys.y * 90 };
+    return { x: scale(raw.x - rest.x), y: scale(raw.y - rest.y) };
+  }
+
+  window.addEventListener('deviceorientation', (event) => {
+    if (event.beta === null || event.gamma === null) return;
+    haveSensor = true;
+    // beta: top edge raised is positive; gamma: right edge lowered is positive.
+    // Rotate the axes when the screen itself is rotated.
+    const angle = (screen.orientation && screen.orientation.angle) || 0;
+    const b = event.beta, g = event.gamma;
+    if (angle === 90) raw = { x: b, y: -g };
+    else if (angle === 270) raw = { x: -b, y: g };
+    else if (angle === 180) raw = { x: -g, y: -b };
+    else raw = { x: g, y: b };
+  });
+
+  async function sendTilt() {
+    const t = currentTilt();
+    dot.style.left = (50 + t.x / 127 * 38) + '%';
+    dot.style.top = (50 + t.y / 127 * 38) + '%';
+    if (!cmdChar || !playing || sending) return;
+    sending = true;
+    const target = cmdChar;
+    try {
+      await gatt(() => target.writeValueWithoutResponse(Int8Array.of(CMD_TILT, t.x, t.y)));
+    } catch (err) {
+      /* a dropped tilt packet is harmless, the next one follows in 50 ms */
+    } finally {
+      sending = false;
+    }
+  }
+  setInterval(sendTilt, SEND_INTERVAL_MS);
+
+  async function command(cmd) {
     if (!cmdChar) return;
     const target = cmdChar;
     try {
-      // Direction changes skip the acknowledgement to keep the delay short
-      await gatt(() => (name === 'start' || name === 'exit')
-        ? target.writeValueWithResponse(Uint8Array.of(CMD[name]))
-        : target.writeValueWithoutResponse(Uint8Array.of(CMD[name])));
+      await gatt(() => target.writeValueWithResponse(Int8Array.of(cmd, 0, 0)));
     } catch (err) {
       setStatus('Send failed: ' + err.message, true);
     }
+  }
+
+  async function start() {
+    rest = { x: raw.x, y: raw.y }; // however the phone is held now counts as level
+    sensorEl.textContent = haveSensor
+      ? 'Tilt the phone to roll the ball'
+      : 'No tilt sensor found. Use the arrow keys.';
+    try {
+      if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+    } catch (err) { /* the screen may dim, the game still works */ }
+    await command(CMD_START);
   }
 
   async function connect() {
@@ -236,7 +296,7 @@
       const service = await server.getPrimaryService(SERVICE);
       cmdChar = await service.getCharacteristic(CMD_CHAR);
       if (!cmdChar.properties.write) {
-        throw new Error('this board is not running the snake firmware');
+        throw new Error('this board is not running the maze firmware');
       }
 
       const stateChar = await service.getCharacteristic(STATE_CHAR);
@@ -254,7 +314,7 @@
       } catch (err) { /* the clock is optional */ }
 
       showConnected(true);
-      setStatus('Connected. Press START.');
+      setStatus('Connected. Hold the phone comfortably and press Start.');
     } catch (err) {
       if (device && device.gatt.connected) device.gatt.disconnect();
       cmdChar = null;
@@ -270,22 +330,17 @@
     if (device && device.gatt.connected) device.gatt.disconnect();
     else connect();
   });
-  exitBtn.addEventListener('click', () => send('exit'));
+  startBtn.addEventListener('click', start);
+  exitBtn.addEventListener('click', () => command(CMD_EXIT));
 
-  // pointerdown reacts sooner than click, which waits for the finger to lift
-  controls.forEach((button) => {
-    button.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      send(button.id);
-    });
-  });
-
-  const KEYS = { ArrowUp: 'up', ArrowRight: 'right', ArrowDown: 'down', ArrowLeft: 'left', Enter: 'start', ' ': 'start' };
+  const KEY_AXIS = { ArrowLeft: ['x', -1], ArrowRight: ['x', 1], ArrowUp: ['y', -1], ArrowDown: ['y', 1] };
   window.addEventListener('keydown', (event) => {
-    if (KEYS[event.key] && cmdChar) {
-      event.preventDefault();
-      send(KEYS[event.key]);
-    }
+    const k = KEY_AXIS[event.key];
+    if (k) { event.preventDefault(); keys[k[0]] = k[1]; }
+  });
+  window.addEventListener('keyup', (event) => {
+    const k = KEY_AXIS[event.key];
+    if (k && keys[k[0]] === k[1]) keys[k[0]] = 0;
   });
 
   if ('serviceWorker' in navigator) {
