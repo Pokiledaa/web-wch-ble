@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#10161c">
-<title>CH582 Maze</title>
+<title>CH582 Race</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <style>
-  /* Layout: one centred column; level on top, a tilt indicator in the middle, connection at the bottom. */
+  /* Layout: one centred column; score on top, a steering indicator in the middle, connection at the bottom. */
   :root {
     --bg: #eef1f3;
     --panel: #ffffff;
@@ -126,17 +126,17 @@
 <body>
 <main>
   <header>
-    <h1>CH582 Maze</h1>
+    <h1>CH582 Race</h1>
     <p id="status" role="status" aria-live="polite">Not connected</p>
   </header>
 
   <div class="score">
-    <div><span>Level</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
+    <div><span>Cars passed</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
     <strong id="level">0</strong>
   </div>
 
   <div class="tilt" aria-hidden="true"><div id="dot"></div></div>
-  <p id="sensor">Tilt the phone to roll the ball</p>
+  <p id="sensor">Tilt the phone left and right to steer</p>
 
   <div class="row">
     <button id="start" class="btn go" type="button" disabled>Start</button>
@@ -148,16 +148,16 @@
 
   <a href="../">LED and brightness controls</a>
   <a href="../snake/">Play Snake</a>
-  <a href="../racing/">Play Race</a>
+  <a href="../maze/">Play Tilt Maze</a>
 </main>
 
 <script>
   const SERVICE = 0xFFE0;
   const CMD_CHAR = 0xFFE2;   // {command, tilt x, tilt y}: 5 start, 6 tilt, 0 back to the clock
-  const STATE_CHAR = 0xFFE4; // notification {state, level}
+  const STATE_CHAR = 0xFFE4; // notification {state, score low, score high}
   const TIME_CHAR = 0xFFE5;  // {hour, minute, second}
   const CMD_EXIT = 0, CMD_START = 5, CMD_TILT = 6;
-  const FULL_TILT_DEG = 30;  // this much lean gives full acceleration
+  const FULL_TILT_DEG = 25;  // this much lean gives full steering
   const DEAD_ZONE_DEG = 2;
   const SEND_INTERVAL_MS = 50;
 
@@ -194,10 +194,12 @@
     statusEl.classList.toggle('bad', !!bad);
   }
 
-  function showGame(state, level) {
+  function showGame(state, score) {
+    if (state === 2 && playing && navigator.vibrate) navigator.vibrate(250); // crash
     playing = state === 1;
-    stateEl.textContent = playing ? 'Playing' : 'Idle';
-    levelEl.textContent = level;
+    stateEl.textContent = ['Idle', 'Driving', 'Crashed'][state] || 'Idle';
+    levelEl.textContent = score;
+    startBtn.textContent = state === 2 ? 'Race again' : 'Start';
   }
 
   function showConnected(connected) {
@@ -221,8 +223,8 @@
       if (Math.abs(deg) < DEAD_ZONE_DEG) return 0;
       return Math.max(-127, Math.min(127, Math.round(deg / FULL_TILT_DEG * 127)));
     };
-    if (keys.x || keys.y) return { x: keys.x * 90, y: keys.y * 90 };
-    return { x: scale(raw.x - rest.x), y: scale(raw.y - rest.y) };
+    if (keys.x) return { x: keys.x * 127, y: 0 };
+    return { x: scale(raw.x - rest.x), y: 0 }; // steering only uses the left-right axis
   }
 
   window.addEventListener('deviceorientation', (event) => {
@@ -268,7 +270,7 @@
   async function start() {
     rest = { x: raw.x, y: raw.y }; // however the phone is held now counts as level
     sensorEl.textContent = haveSensor
-      ? 'Tilt the phone to roll the ball'
+      ? 'Tilt the phone left and right to steer'
       : 'No tilt sensor found. Use the arrow keys.';
     try {
       if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen');
@@ -303,7 +305,7 @@
       const stateChar = await service.getCharacteristic(STATE_CHAR);
       stateChar.addEventListener('characteristicvaluechanged', (event) => {
         const v = event.target.value;
-        if (v.byteLength >= 2) showGame(v.getUint8(0), v.getUint8(1));
+        if (v.byteLength >= 3) showGame(v.getUint8(0), v.getUint16(1, true));
       });
       await gatt(() => stateChar.startNotifications());
 
