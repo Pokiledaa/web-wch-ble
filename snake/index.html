@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#10161c">
+<title>CH582 Snake</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  /* Layout: one centred column; score on top, a thumb-sized direction pad in the middle, connection at the bottom. */
+  :root {
+    --bg: #eef1f3;
+    --panel: #ffffff;
+    --fg: #17202a;
+    --muted: #5d6b78;
+    --line: #cfd6dc;
+    --accent: #0b6e8f;
+    --go: #1f8a4c;
+    --bad: #b3261e;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161c;
+      --panel: #19222b;
+      --fg: #e6edf2;
+      --muted: #93a2b0;
+      --line: #2c3945;
+      --accent: #5cc3e6;
+      --go: #5fd08a;
+      --bad: #ff8a80;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.45 var(--sans);
+    display: flex;
+    justify-content: center;
+    padding-inline: 16px;
+    padding-block: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-bottom));
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  main {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+  }
+  header { text-align: center; display: flex; flex-direction: column; gap: 4px; }
+  h1 { margin: 0; font-size: 1.5rem; font-weight: 650; letter-spacing: -.01em; }
+  #status { margin: 0; color: var(--muted); min-height: 1.45em; }
+  #status.bad { color: var(--bad); }
+
+  .score {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 12px 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+  }
+  .score span { color: var(--muted); font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; }
+  .score strong { font: 650 2rem var(--mono); font-variant-numeric: tabular-nums; }
+  #gameState { font-size: .85rem; color: var(--muted); }
+
+  .pad {
+    display: grid;
+    grid-template-columns: repeat(3, min(26vw, 92px));
+    grid-template-rows: repeat(3, min(26vw, 92px));
+    gap: 8px;
+    touch-action: none;
+  }
+  .pad button {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--panel);
+    color: var(--fg);
+    font-size: 1.8rem;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  .pad button:active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .pad button:disabled { opacity: .4; }
+  #up { grid-area: 1 / 2; } #left { grid-area: 2 / 1; } #right { grid-area: 2 / 3; } #down { grid-area: 3 / 2; }
+  #start {
+    grid-area: 2 / 2;
+    background: var(--go);
+    border-color: var(--go);
+    color: var(--bg);
+    font: 650 .95rem var(--sans);
+    letter-spacing: .04em;
+  }
+
+  .row { width: 100%; display: flex; gap: 10px; }
+  .btn {
+    flex: 1;
+    padding: 13px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    font: 600 1rem var(--sans);
+    cursor: pointer;
+  }
+  .btn.quiet { background: transparent; color: var(--accent); }
+  .btn:disabled { opacity: .45; }
+  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  a { color: var(--accent); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>CH582 Snake</h1>
+    <p id="status" role="status" aria-live="polite">Not connected</p>
+  </header>
+
+  <div class="score">
+    <div><span>Score</span><br><em id="gameState" style="font-style:normal">Idle</em></div>
+    <strong id="score">0</strong>
+  </div>
+
+  <div class="pad" id="pad">
+    <button id="up" type="button" aria-label="Up" disabled>&#9650;</button>
+    <button id="left" type="button" aria-label="Left" disabled>&#9664;</button>
+    <button id="start" type="button" disabled>START</button>
+    <button id="right" type="button" aria-label="Right" disabled>&#9654;</button>
+    <button id="down" type="button" aria-label="Down" disabled>&#9660;</button>
+  </div>
+
+  <div class="row">
+    <button id="connect" class="btn" type="button">Connect</button>
+    <button id="exit" class="btn quiet" type="button" disabled>Show clock</button>
+  </div>
+
+  <a href="../">LED and brightness controls</a>
+</main>
+
+<script>
+  const SERVICE = 0xFFE0;
+  const CMD_CHAR = 0xFFE2;   // 1 up, 2 right, 3 down, 4 left, 5 start, 0 back to the clock
+  const STATE_CHAR = 0xFFE4; // notification {state, score}
+  const TIME_CHAR = 0xFFE5;  // {hour, minute, second}
+  const CMD = { up: 1, right: 2, down: 3, left: 4, start: 5, exit: 0 };
+  const STATE_NAMES = ['Idle', 'Playing', 'Game over'];
+
+  const statusEl = document.getElementById('status');
+  const connectBtn = document.getElementById('connect');
+  const exitBtn = document.getElementById('exit');
+  const scoreEl = document.getElementById('score');
+  const stateEl = document.getElementById('gameState');
+  const controls = ['up', 'left', 'start', 'right', 'down'].map((id) => document.getElementById(id));
+
+  let device = null;
+  let cmdChar = null;
+
+  // Web Bluetooth allows one GATT operation at a time, so run them one after another.
+  let gattQueue = Promise.resolve();
+  function gatt(op) {
+    const run = gattQueue.then(op, op);
+    gattQueue = run.catch(() => {});
+    return run;
+  }
+
+  function setStatus(text, bad) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle('bad', !!bad);
+  }
+
+  function showGame(state, score) {
+    stateEl.textContent = STATE_NAMES[state] || 'Idle';
+    scoreEl.textContent = score;
+  }
+
+  function showConnected(connected) {
+    controls.forEach((b) => { b.disabled = !connected; });
+    exitBtn.disabled = !connected;
+    connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
+    connectBtn.classList.toggle('quiet', connected);
+    if (!connected) showGame(0, 0);
+  }
+
+  function onDisconnected() {
+    cmdChar = null;
+    showConnected(false);
+    setStatus('Disconnected');
+  }
+
+  async function send(name) {
+    if (!cmdChar) return;
+    const target = cmdChar;
+    try {
+      // Direction changes skip the acknowledgement to keep the delay short
+      await gatt(() => (name === 'start' || name === 'exit')
+        ? target.writeValueWithResponse(Uint8Array.of(CMD[name]))
+        : target.writeValueWithoutResponse(Uint8Array.of(CMD[name])));
+    } catch (err) {
+      setStatus('Send failed: ' + err.message, true);
+    }
+  }
+
+  async function connect() {
+    if (!navigator.bluetooth) {
+      setStatus(window.isSecureContext
+        ? 'This browser has no Web Bluetooth. Use Chrome on Android.'
+        : 'Web Bluetooth needs HTTPS. Open this page over https://.', true);
+      return;
+    }
+    connectBtn.disabled = true;
+    try {
+      setStatus('Choose the board in the list…');
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'CH582' }],
+        optionalServices: [SERVICE]
+      });
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+
+      setStatus('Connecting…');
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE);
+      cmdChar = await service.getCharacteristic(CMD_CHAR);
+      if (!cmdChar.properties.write) {
+        throw new Error('this board is not running the snake firmware');
+      }
+
+      const stateChar = await service.getCharacteristic(STATE_CHAR);
+      stateChar.addEventListener('characteristicvaluechanged', (event) => {
+        const v = event.target.value;
+        if (v.byteLength >= 2) showGame(v.getUint8(0), v.getUint8(1));
+      });
+      await gatt(() => stateChar.startNotifications());
+
+      try {
+        const timeChar = await service.getCharacteristic(TIME_CHAR);
+        const now = new Date();
+        await gatt(() => timeChar.writeValueWithResponse(
+          Uint8Array.of(now.getHours(), now.getMinutes(), now.getSeconds())));
+      } catch (err) { /* the clock is optional */ }
+
+      showConnected(true);
+      setStatus('Connected. Press START.');
+    } catch (err) {
+      if (device && device.gatt.connected) device.gatt.disconnect();
+      cmdChar = null;
+      showConnected(false);
+      setStatus(err.name === 'NotFoundError' ? 'No board chosen' : 'Could not connect: ' + err.message,
+        err.name !== 'NotFoundError');
+    } finally {
+      connectBtn.disabled = false;
+    }
+  }
+
+  connectBtn.addEventListener('click', () => {
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    else connect();
+  });
+  exitBtn.addEventListener('click', () => send('exit'));
+
+  // pointerdown reacts sooner than click, which waits for the finger to lift
+  controls.forEach((button) => {
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      send(button.id);
+    });
+  });
+
+  const KEYS = { ArrowUp: 'up', ArrowRight: 'right', ArrowDown: 'down', ArrowLeft: 'left', Enter: 'start', ' ': 'start' };
+  window.addEventListener('keydown', (event) => {
+    if (KEYS[event.key] && cmdChar) {
+      event.preventDefault();
+      send(KEYS[event.key]);
+    }
+  });
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('../sw.js').catch(() => {});
+  }
+</script>
+</body>
+</html>
