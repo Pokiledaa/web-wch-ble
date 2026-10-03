@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#10161c">
+<title>CH582 LED</title>
+<style>
+  /* Layout: one centred column, the lamp button is the whole page; status above, connection below. */
+  :root {
+    --bg: #eef1f3;
+    --panel: #ffffff;
+    --fg: #17202a;
+    --muted: #5d6b78;
+    --line: #cfd6dc;
+    --accent: #0b6e8f;
+    --on: #f2a900;
+    --on-glow: rgba(242, 169, 0, .45);
+    --bad: #b3261e;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161c;
+      --panel: #19222b;
+      --fg: #e6edf2;
+      --muted: #93a2b0;
+      --line: #2c3945;
+      --accent: #5cc3e6;
+      --on: #ffc233;
+      --on-glow: rgba(255, 194, 51, .4);
+      --bad: #ff8a80;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.45 var(--sans);
+    display: flex;
+    justify-content: center;
+    padding-inline: 16px;
+    padding-block: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-bottom));
+  }
+  main {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+  }
+  header { text-align: center; display: flex; flex-direction: column; gap: 6px; }
+  h1 { margin: 0; font-size: 1.5rem; font-weight: 650; letter-spacing: -.01em; }
+  #status { margin: 0; color: var(--muted); min-height: 1.45em; }
+  #status.bad { color: var(--bad); }
+
+  #lamp {
+    width: min(62vw, 220px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 2px solid var(--line);
+    background: var(--panel);
+    color: var(--muted);
+    font: 600 1.6rem var(--sans);
+    letter-spacing: .08em;
+    cursor: pointer;
+    transition: background .15s, box-shadow .15s, color .15s, border-color .15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #lamp[aria-pressed="true"] {
+    background: var(--on);
+    border-color: var(--on);
+    color: #1c1500;
+    box-shadow: 0 0 0 10px var(--on-glow), 0 0 60px var(--on-glow);
+  }
+  #lamp:disabled { opacity: .45; cursor: not-allowed; }
+  #lamp:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+  .btn {
+    width: 100%;
+    padding: 14px 18px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    font: 600 1rem var(--sans);
+    cursor: pointer;
+  }
+  .btn.quiet { background: transparent; color: var(--accent); }
+  .btn:disabled { opacity: .5; cursor: progress; }
+
+  dl {
+    width: 100%;
+    margin: 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 16px;
+    font-size: .85rem;
+    color: var(--muted);
+  }
+  dt { white-space: nowrap; }
+  dd { margin: 0; text-align: right; font-family: var(--mono); min-width: 0; overflow-wrap: anywhere; }
+  @media (prefers-reduced-motion: reduce) { #lamp { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>CH582 LED</h1>
+    <p id="status" role="status" aria-live="polite">Not connected</p>
+  </header>
+
+  <button id="lamp" type="button" aria-pressed="false" disabled>OFF</button>
+
+  <button id="connect" class="btn" type="button">Connect</button>
+
+  <dl>
+    <dt>Device</dt><dd id="devName">none</dd>
+    <dt>Service</dt><dd>0xFFE0</dd>
+    <dt>Characteristic</dt><dd>0xFFE1</dd>
+  </dl>
+</main>
+
+<script>
+  const SERVICE = 0xFFE0;
+  const LED_CHAR = 0xFFE1;
+
+  const statusEl = document.getElementById('status');
+  const lamp = document.getElementById('lamp');
+  const connectBtn = document.getElementById('connect');
+  const devName = document.getElementById('devName');
+
+  let device = null;
+  let ledChar = null;
+  let busy = false;
+
+  function setStatus(text, bad) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle('bad', !!bad);
+  }
+
+  function showLed(on) {
+    lamp.setAttribute('aria-pressed', on ? 'true' : 'false');
+    lamp.textContent = on ? 'ON' : 'OFF';
+  }
+
+  function showConnected(connected) {
+    lamp.disabled = !connected;
+    connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
+    connectBtn.classList.toggle('quiet', connected);
+    devName.textContent = connected && device ? (device.name || 'unnamed') : 'none';
+    if (!connected) showLed(false);
+  }
+
+  function onDisconnected() {
+    ledChar = null;
+    showConnected(false);
+    setStatus('Disconnected');
+  }
+
+  async function connect() {
+    if (!navigator.bluetooth) {
+      setStatus(window.isSecureContext
+        ? 'This browser has no Web Bluetooth. Use Chrome on Android.'
+        : 'Web Bluetooth needs HTTPS. Open this page over https://.', true);
+      return;
+    }
+    connectBtn.disabled = true;
+    try {
+      setStatus('Choose the board in the list…');
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'CH582' }],
+        optionalServices: [SERVICE]
+      });
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+
+      setStatus('Connecting…');
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE);
+      ledChar = await service.getCharacteristic(LED_CHAR);
+
+      const value = await ledChar.readValue();
+      const raw = value.byteLength ? value.getUint8(0) : 0;
+      showLed(raw !== 0 && raw !== 0x30);
+      showConnected(true);
+      setStatus('Connected');
+    } catch (err) {
+      if (device && device.gatt.connected) device.gatt.disconnect();
+      ledChar = null;
+      showConnected(false);
+      if (err.name === 'NotFoundError') {
+        setStatus('No board chosen');
+      } else {
+        setStatus('Could not connect: ' + err.message, true);
+      }
+    } finally {
+      connectBtn.disabled = false;
+    }
+  }
+
+  async function toggle() {
+    if (!ledChar || busy) return;
+    busy = true;
+    const next = lamp.getAttribute('aria-pressed') !== 'true';
+    try {
+      await ledChar.writeValueWithResponse(Uint8Array.of(next ? 1 : 0));
+      showLed(next);
+      setStatus('Connected');
+    } catch (err) {
+      setStatus('Write failed: ' + err.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  connectBtn.addEventListener('click', () => {
+    if (device && device.gatt.connected) {
+      device.gatt.disconnect();
+    } else {
+      connect();
+    }
+  });
+  lamp.addEventListener('click', toggle);
+</script>
+</body>
+</html>
