@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#10161c">
 <title>CH582 LED</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   /* Layout: one centred column, the lamp button is the whole page; status above, connection below. */
   :root {
@@ -80,6 +84,20 @@
   #lamp:disabled { opacity: .45; cursor: not-allowed; }
   #lamp:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 
+  .dim { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+  .dim-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .dim-head label { font-weight: 600; }
+  #brightnessValue { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+  #brightness {
+    width: 100%;
+    height: 32px;
+    margin: 0;
+    accent-color: var(--on);
+    touch-action: pan-y;
+  }
+  #brightness:disabled { opacity: .45; }
+  #brightness:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
   .btn {
     width: 100%;
     padding: 14px 18px;
@@ -118,27 +136,50 @@
 
   <button id="lamp" type="button" aria-pressed="false" disabled>OFF</button>
 
+  <div class="dim">
+    <div class="dim-head">
+      <label for="brightness">Brightness</label>
+      <span id="brightnessValue">100%</span>
+    </div>
+    <input id="brightness" type="range" min="0" max="100" step="1" value="100" disabled>
+  </div>
+
   <button id="connect" class="btn" type="button">Connect</button>
 
   <dl>
     <dt>Device</dt><dd id="devName">none</dd>
-    <dt>Service</dt><dd>0xFFE0</dd>
-    <dt>Characteristic</dt><dd>0xFFE1</dd>
+    <dt>Board clock</dt><dd id="clockInfo">not set</dd>
   </dl>
 </main>
 
 <script>
   const SERVICE = 0xFFE0;
-  const LED_CHAR = 0xFFE1;
+  const LED_CHAR = 0xFFE1;        // 0 = off, 1 = on
+  const BRIGHTNESS_CHAR = 0xFFE3; // 0..100 percent
+  const TIME_CHAR = 0xFFE5;       // {hour, minute, second}
 
   const statusEl = document.getElementById('status');
   const lamp = document.getElementById('lamp');
   const connectBtn = document.getElementById('connect');
   const devName = document.getElementById('devName');
+  const slider = document.getElementById('brightness');
+  const sliderValue = document.getElementById('brightnessValue');
+  const clockInfo = document.getElementById('clockInfo');
 
   let device = null;
   let ledChar = null;
+  let brightnessChar = null;
   let busy = false;
+  let pendingBrightness = null;
+  let sendingBrightness = false;
+
+  // Web Bluetooth allows one GATT operation at a time, so run them one after another.
+  let gattQueue = Promise.resolve();
+  function gatt(op) {
+    const run = gattQueue.then(op, op);
+    gattQueue = run.catch(() => {});
+    return run;
+  }
 
   function setStatus(text, bad) {
     statusEl.textContent = text;
@@ -150,8 +191,15 @@
     lamp.textContent = on ? 'ON' : 'OFF';
   }
 
+  function showBrightness(percent) {
+    slider.value = percent;
+    sliderValue.textContent = percent + '%';
+  }
+
   function showConnected(connected) {
     lamp.disabled = !connected;
+    slider.disabled = !connected || !brightnessChar;
+    if (!connected) clockInfo.textContent = 'not set';
     connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
     connectBtn.classList.toggle('quiet', connected);
     devName.textContent = connected && device ? (device.name || 'unnamed') : 'none';
@@ -160,6 +208,8 @@
 
   function onDisconnected() {
     ledChar = null;
+    brightnessChar = null;
+    pendingBrightness = null;
     showConnected(false);
     setStatus('Disconnected');
   }
@@ -185,14 +235,25 @@
       const service = await server.getPrimaryService(SERVICE);
       ledChar = await service.getCharacteristic(LED_CHAR);
 
-      const value = await ledChar.readValue();
+      const value = await gatt(() => ledChar.readValue());
       const raw = value.byteLength ? value.getUint8(0) : 0;
       showLed(raw !== 0 && raw !== 0x30);
+
+      // Brightness and clock need the newer firmware; the on/off button works without them.
+      try {
+        brightnessChar = await service.getCharacteristic(BRIGHTNESS_CHAR);
+        const b = await gatt(() => brightnessChar.readValue());
+        showBrightness(Math.min(100, b.byteLength ? b.getUint8(0) : 100));
+      } catch (err) {
+        brightnessChar = null;
+      }
       showConnected(true);
       setStatus('Connected');
+      syncClock(service);
     } catch (err) {
       if (device && device.gatt.connected) device.gatt.disconnect();
       ledChar = null;
+      brightnessChar = null;
       showConnected(false);
       if (err.name === 'NotFoundError') {
         setStatus('No board chosen');
@@ -204,12 +265,44 @@
     }
   }
 
+  async function syncClock(service) {
+    try {
+      const timeChar = await service.getCharacteristic(TIME_CHAR);
+      const now = new Date();
+      await gatt(() => timeChar.writeValueWithResponse(
+        Uint8Array.of(now.getHours(), now.getMinutes(), now.getSeconds())));
+      clockInfo.textContent = 'set ' + now.toLocaleTimeString();
+    } catch (err) {
+      clockInfo.textContent = 'not supported';
+    }
+  }
+
+  // The slider fires faster than BLE can write, so only the newest value is sent.
+  async function sendBrightness() {
+    if (sendingBrightness) return;
+    sendingBrightness = true;
+    try {
+      while (pendingBrightness !== null && brightnessChar) {
+        const value = pendingBrightness;
+        pendingBrightness = null;
+        const target = brightnessChar;
+        await gatt(() => target.writeValueWithResponse(Uint8Array.of(value)));
+      }
+      setStatus('Connected');
+    } catch (err) {
+      setStatus('Write failed: ' + err.message, true);
+    } finally {
+      sendingBrightness = false;
+    }
+  }
+
   async function toggle() {
     if (!ledChar || busy) return;
     busy = true;
     const next = lamp.getAttribute('aria-pressed') !== 'true';
     try {
-      await ledChar.writeValueWithResponse(Uint8Array.of(next ? 1 : 0));
+      const target = ledChar;
+      await gatt(() => target.writeValueWithResponse(Uint8Array.of(next ? 1 : 0)));
       showLed(next);
       setStatus('Connected');
     } catch (err) {
@@ -227,6 +320,16 @@
     }
   });
   lamp.addEventListener('click', toggle);
+  slider.addEventListener('input', () => {
+    const percent = Number(slider.value);
+    sliderValue.textContent = percent + '%';
+    pendingBrightness = percent;
+    sendBrightness();
+  });
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 </script>
 </body>
 </html>
