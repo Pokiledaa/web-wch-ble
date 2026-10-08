@@ -357,7 +357,7 @@
     document.body.classList.toggle('playing', playing);
     healthEl.textContent = health;
     healthEl.classList.toggle('low', playing && health <= 25);
-    ammoEl.textContent = ammo;
+    ammoEl.textContent = (playing && ammo === 0) ? 'KNIFE' : ammo; // FIRE stabs when the bullets run out
     killsEl.textContent = kills;
     levelEl.textContent = level || '-';
     titleEl.textContent = state === 2 ? 'YOU DIED' : state === 3 ? 'YOU WIN' : 'CH582 DOOM';
