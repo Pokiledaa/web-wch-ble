@@ -1,0 +1,31 @@
+{
+  "name": "CH582 Doom",
+  "short_name": "CH582 Doom",
+  "description": "Play a Doom-style shooter on a WCH CH582 board's OLED, with the phone as a two-stick controller.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#10161c",
+  "theme_color": "#10161c",
+  "icons": [
+    {
+      "src": "../icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
