@@ -347,7 +347,7 @@
     const wasPlaying = playing;
     if (wasPlaying && health < lastHealth) {
       // A harder hit buzzes longer (imps take 3 to 24 health); dying is a long double buzz
-      buzz(state === 2 ? [300, 80, 500] : Math.min(400, 120 + (lastHealth - health) * 10));
+      buzz(state === 2 ? [500, 80, 700] : Math.min(600, 220 + (lastHealth - health) * 15));
       hurtEl.classList.remove('hit');
       void hurtEl.offsetWidth; // restart the flash if one is still fading
       hurtEl.classList.add('hit');
@@ -406,7 +406,7 @@
     try { vibrationEl.checked = localStorage.getItem('doomVibration') !== '0'; } catch (err) { /* on by default */ }
     vibrationEl.addEventListener('change', () => {
       try { localStorage.setItem('doomVibration', vibrationEl.checked ? '1' : '0'); } catch (err) { /* not remembered */ }
-      buzz(200);
+      buzz(300);
     });
   }
 
