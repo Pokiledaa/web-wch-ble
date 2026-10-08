@@ -128,7 +128,7 @@
     position: absolute;
     right: max(26px, calc(env(safe-area-inset-right) + 14px));
     bottom: max(26px, calc(env(safe-area-inset-bottom) + 14px));
-    width: min(30vh, 112px);
+    width: calc(min(30vh, 112px) * var(--fire-scale, 1)); /* the player can resize and move it */
     aspect-ratio: 1;
     border-radius: 50%;
     border: 2px solid var(--red);
@@ -140,6 +140,27 @@
   }
   #fire.firing { background: var(--red); color: var(--black); }
   #fire:disabled { opacity: .35; }
+  body.arranging #fire { border-style: dashed; background: rgba(255, 59, 48, .25); }
+
+  /* ---- moving the FIRE button ---- */
+  #arrange {
+    position: absolute;
+    top: max(8px, env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px 8px 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--glass);
+    white-space: nowrap;
+    font-size: .85rem;
+  }
+  #arrange[hidden] { display: none; }
+  #arrange .btn { flex: none; padding: 8px 12px; }
+  body.arranging .hud { visibility: hidden; }
 
   /* ---- being hurt: the edges of the screen flash red ---- */
   #hurt {
@@ -225,6 +246,12 @@
   <button id="fire" type="button" disabled>FIRE</button>
   <div id="hurt"></div>
 
+  <div id="arrange" hidden>
+    <span>Drag FIRE to where you want it</span>
+    <button id="resetFire" class="btn quiet" type="button">RESET</button>
+    <button id="doneFire" class="btn" type="button">DONE</button>
+  </div>
+
   <div id="menu">
     <div class="panel">
       <h1 id="title">CH582 DOOM</h1>
@@ -237,6 +264,10 @@
       <label class="tune">Turn speed
         <input id="turnSpeed" type="range" min="1" max="20" step="1" value="5">
         <output id="turnSpeedValue" for="turnSpeed">5</output>
+      </label>
+      <label class="tune">FIRE size
+        <input id="fireSize" type="range" min="60" max="180" step="10" value="100">
+        <button id="moveFire" class="btn quiet" type="button" style="flex: none">MOVE FIRE</button>
       </label>
       <p class="help">Left thumb anywhere on the left moves. Drag anywhere else to look. Hold FIRE to shoot, and slide it to aim.</p>
       <button id="resume" class="btn quiet" type="button" hidden>BACK TO THE GAME</button>
@@ -272,6 +303,7 @@
   const moveZone = $('moveZone'), stickEl = $('stick'), knobEl = $('knob');
   const fireBtn = $('fire'), hurtEl = $('hurt');
   const turnSpeedEl = $('turnSpeed'), turnSpeedValueEl = $('turnSpeedValue');
+  const fireSizeEl = $('fireSize'), moveFireBtn = $('moveFire'), arrangeEl = $('arrange');
 
   let device = null;
   let cmdChar = null;
@@ -279,6 +311,7 @@
   let lastHealth = 0;
   let sending = false;
   let wakeLock = null;
+  let arranging = false;  // the player is dragging the FIRE button to a new place
 
   // Everything that feeds the controls: the move stick, dragging on the screen, FIRE and the keyboard
   const move = { x: 0, y: 0 };
@@ -330,7 +363,7 @@
   function showConnected(connected) {
     startBtn.disabled = !connected;
     exitBtn.disabled = !connected;
-    fireBtn.disabled = !connected;
+    fireBtn.disabled = !connected && !arranging;
     connectBtn.textContent = connected ? 'DISCONNECT' : 'CONNECT';
     connectBtn.classList.toggle('quiet', connected);
     if (!connected) { showGame(0, 0, 0, 0, 0); showMenu(true); }
@@ -536,7 +569,7 @@
   // Look: any finger dragged across the rest of the screen turns the view. Several can at once.
   const lookPointers = new Map(); // pointer id -> last x position
   document.addEventListener('pointerdown', (event) => {
-    if (event.target.closest('#moveZone, #menu, button, a')) return;
+    if (event.target.closest('#moveZone, #menu, #arrange, button, a')) return;
     lookPointers.set(event.pointerId, event.clientX);
   });
   document.addEventListener('pointermove', (event) => {
@@ -563,19 +596,77 @@
     firePointer = event.pointerId;
     fireLastX = event.clientX;
     fireBtn.setPointerCapture(firePointer);
-    setFiring(true);
+    if (!arranging) setFiring(true);
   });
   fireBtn.addEventListener('pointermove', (event) => {
     if (event.pointerId !== firePointer) return;
+    if (arranging) {
+      // the button's centre follows the finger; kept as fractions so it survives rotation
+      fireLayout.x = event.clientX / window.innerWidth;
+      fireLayout.y = event.clientY / window.innerHeight;
+      applyFireLayout();
+      return;
+    }
     addLook((event.clientX - fireLastX) * lookDegPerPx);
     fireLastX = event.clientX;
   });
   ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => {
     fireBtn.addEventListener(type, (event) => {
-      if (event.pointerId === firePointer) { firePointer = null; setFiring(false); }
+      if (event.pointerId !== firePointer) return;
+      firePointer = null;
+      setFiring(false);
+      if (arranging) saveFireLayout();
     });
   });
   fireBtn.addEventListener('contextmenu', (event) => event.preventDefault());
+
+  // The FIRE button's place and size are the player's own, kept on this phone between visits.
+  // x and y are the centre as fractions of the screen; null means the usual bottom right corner.
+  const fireLayout = { x: null, y: null, size: 100 };
+  try {
+    const saved = JSON.parse(localStorage.getItem('doomFireLayout') || '{}');
+    if (typeof saved.x === 'number' && typeof saved.y === 'number') { fireLayout.x = saved.x; fireLayout.y = saved.y; }
+    if (saved.size >= 60 && saved.size <= 180) fireLayout.size = saved.size;
+  } catch (err) { /* use the defaults */ }
+  function saveFireLayout() {
+    try { localStorage.setItem('doomFireLayout', JSON.stringify(fireLayout)); } catch (err) { /* not remembered */ }
+  }
+  function applyFireLayout() {
+    fireBtn.style.setProperty('--fire-scale', fireLayout.size / 100);
+    fireSizeEl.value = fireLayout.size;
+    if (fireLayout.x === null) {
+      fireBtn.style.left = fireBtn.style.top = fireBtn.style.right = fireBtn.style.bottom = '';
+      return;
+    }
+    const half = fireBtn.offsetWidth / 2; // kept wholly on the screen
+    const cx = Math.max(half, Math.min(window.innerWidth - half, fireLayout.x * window.innerWidth));
+    const cy = Math.max(half, Math.min(window.innerHeight - half, fireLayout.y * window.innerHeight));
+    fireBtn.style.left = (cx - half) + 'px';
+    fireBtn.style.top = (cy - half) + 'px';
+    fireBtn.style.right = fireBtn.style.bottom = 'auto';
+  }
+  function setArranging(on) {
+    arranging = on;
+    document.body.classList.toggle('arranging', on);
+    arrangeEl.hidden = !on;
+    fireBtn.disabled = !cmdChar && !on; // it has to take touches to be dragged
+    showMenu(!on && !playing);
+  }
+  applyFireLayout();
+  window.addEventListener('resize', applyFireLayout);
+  fireSizeEl.addEventListener('input', () => {
+    fireLayout.size = Number(fireSizeEl.value);
+    applyFireLayout();
+    saveFireLayout();
+  });
+  moveFireBtn.addEventListener('click', () => setArranging(true));
+  $('doneFire').addEventListener('click', () => setArranging(false));
+  $('resetFire').addEventListener('click', () => {
+    fireLayout.x = fireLayout.y = null;
+    fireLayout.size = 100;
+    applyFireLayout();
+    saveFireLayout();
+  });
 
   // Keyboard, for trying it from a laptop: W A S D to move, left and right arrows (or dragging the mouse) to turn, space to fire
   const GAME_KEYS = ['w', 'a', 's', 'd', 'ArrowLeft', 'ArrowRight', ' '];
