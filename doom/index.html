@@ -284,7 +284,7 @@
     return {
       strafe: clamp(shape(move.x, 1) + key('d', 'a')),
       forward: clamp(-shape(move.y, 1) + key('w', 's')),
-      turn: clamp(shape(turn.x, 1.6) + shape(fireTurn, 1.6) + key('ArrowRight', 'ArrowLeft')),
+      turn: clamp(shape(turn.x, 1) + shape(fireTurn, 1) + key('ArrowRight', 'ArrowLeft')),
       buttons: (firing || keys.has(' ')) ? BUTTON_FIRE : 0
     };
   }
