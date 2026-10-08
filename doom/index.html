@@ -3,196 +3,252 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#10161c">
+<meta name="theme-color" content="#06080a">
 <title>CH582 Doom</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  /* Layout: a phone shooter. Status and buttons along the top; below them the whole screen is
-     the look area (drag anywhere to turn), with the move stick under the left thumb and FIRE
-     under the right. Meant to be held in landscape. */
+  /* Layout: a phone shooter's screen, held in landscape. The whole screen is the play surface.
+     Readouts sit in a thin strip along the top. The left part is the move zone: the stick
+     appears wherever the thumb lands. Everywhere else drags the view round. FIRE sits under
+     the right thumb. Connect, Start and the settings live in a menu that covers the screen
+     until a game is running.
+     Look: the board's display is a 1-bit OLED, so this is drawn the same way: black, one
+     cold white, dither dots for shading, a pixel face for the readouts. Red is kept for
+     FIRE and for being hurt. */
   :root {
-    --bg: #eef1f3;
-    --panel: #ffffff;
-    --fg: #17202a;
-    --muted: #5d6b78;
-    --line: #cfd6dc;
-    --accent: #0b6e8f;
-    --go: #1f8a4c;
-    --bad: #b3261e;
+    --black: #06080a;
+    --glass: #0e1318;
+    --white: #dce8ff;   /* the cold white of an OLED pixel */
+    --dim: #6c7a8e;
+    --line: #27313d;
+    --red: #ff3b30;
+    --pixel: "Silkscreen", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #10161c;
-      --panel: #19222b;
-      --fg: #e6edf2;
-      --muted: #93a2b0;
-      --line: #2c3945;
-      --accent: #5cc3e6;
-      --go: #5fd08a;
-      --bad: #ff8a80;
-      color-scheme: dark;
-    }
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: var(--bg);
-    color: var(--fg);
-    font: 16px/1.4 var(--sans);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right));
-    padding-block: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-bottom));
-    overscroll-behavior: none;
+    position: fixed;
+    inset: 0;
     overflow: hidden;
+    background-color: var(--black);
+    /* dither dots, the way the board shades its walls */
+    background-image: radial-gradient(circle, #131a22 1px, transparent 1.2px);
+    background-size: 6px 6px;
+    color: var(--white);
+    font: 15px/1.4 var(--sans);
+    overscroll-behavior: none;
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
   }
+  button { font: inherit; color: inherit; touch-action: manipulation; cursor: pointer; }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--white); outline-offset: 3px; }
 
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
-  h1 { margin: 0; font-size: 1.15rem; font-weight: 650; letter-spacing: -.01em; }
-  #status { margin: 0; color: var(--muted); font-size: .9rem; flex: 1 1 140px; min-width: 0; }
-  #status.bad { color: var(--bad); }
-  .buttons { display: flex; gap: 8px; }
-  .btn {
-    padding: 9px 14px;
-    border-radius: 10px;
-    border: 1px solid var(--accent);
-    background: var(--accent);
-    color: var(--bg);
-    font: 600 .95rem var(--sans);
-    cursor: pointer;
-    touch-action: manipulation;
+  /* ---- readouts ---- */
+  .hud {
+    position: absolute;
+    top: max(8px, env(safe-area-inset-top));
+    left: max(14px, env(safe-area-inset-left));
+    right: max(14px, env(safe-area-inset-right));
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    pointer-events: none; /* drags pass straight through to the look area */
+    font-family: var(--pixel);
   }
-  .btn.go { background: var(--go); border-color: var(--go); }
-  .btn.quiet { background: transparent; color: var(--accent); }
-  .btn:disabled { opacity: .45; }
-  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
+  .stat span { display: block; color: var(--dim); font-size: .62rem; letter-spacing: .12em; }
+  .stat strong { display: block; font-size: 1.5rem; font-weight: 700; line-height: 1.05; }
+  #health.low { color: var(--red); }
+  #menuBtn {
+    pointer-events: auto;
+    margin-left: auto;
+    padding: 8px 12px;
     border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--panel);
+    border-radius: 4px;
+    background: var(--glass);
+    font: 400 .7rem var(--pixel);
+    letter-spacing: .12em;
   }
-  .stats div { padding: 6px 10px; text-align: center; }
-  .stats div + div { border-left: 1px solid var(--line); }
-  .stats span { display: block; color: var(--muted); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
-  .stats strong { font: 650 1.35rem var(--mono); font-variant-numeric: tabular-nums; }
-  #health.low { color: var(--bad); }
 
-  .pad { flex: 1; min-height: 0; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
-  .side { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .side p { margin: 0; color: var(--muted); font-size: .8rem; }
-
-  .stick {
-    --size: min(40vw, 58vh, 210px);
-    position: relative;
+  /* ---- move zone and stick ---- */
+  #moveZone {
+    position: absolute;
+    left: 0;
+    top: 64px;
+    bottom: 0;
+    width: 44%;
+    touch-action: none;
+  }
+  #stick {
+    --size: min(34vh, 132px);
+    position: absolute;
     width: var(--size);
     height: var(--size);
+    margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+    border: 2px dashed var(--line);
     border-radius: 50%;
-    border: 2px solid var(--line);
-    background: var(--panel);
-    touch-action: none;
-    cursor: pointer;
+    pointer-events: none;
   }
-  .stick::before, .stick::after { content: ""; position: absolute; background: var(--line); }
-  .stick::before { left: 50%; top: 14%; bottom: 14%; width: 1px; }
-  .stick::after { top: 50%; left: 14%; right: 14%; height: 1px; }
-  .knob {
+  #stick.held { border-style: solid; border-color: var(--dim); }
+  #knob {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 36%;
-    height: 36%;
-    margin: -18% 0 0 -18%;
+    width: 42%;
+    height: 42%;
+    margin: -21% 0 0 -21%;
     border-radius: 50%;
-    background: var(--accent);
-    z-index: 1;
+    border: 2px solid var(--dim);
+    background: var(--glass);
+  }
+  #stick.held #knob { border-color: var(--white); background: var(--white); }
+  .tag {
+    position: absolute;
+    color: var(--dim);
+    font: 400 .62rem var(--pixel);
+    letter-spacing: .14em;
     pointer-events: none;
   }
-  .stick.off { opacity: .45; }
+  #moveTag { left: 50%; top: 100%; transform: translate(-50%, 8px); white-space: nowrap; }
+  #lookTag { left: 50%; top: 52%; transform: translate(-50%, -50%); }
+  body.playing #lookTag, #stick.held #moveTag { opacity: 0; }
 
+  /* ---- fire ---- */
   #fire {
-    width: min(30vw, 42vh, 150px);
+    position: absolute;
+    right: max(26px, calc(env(safe-area-inset-right) + 14px));
+    bottom: max(26px, calc(env(safe-area-inset-bottom) + 14px));
+    width: min(30vh, 112px);
     aspect-ratio: 1;
     border-radius: 50%;
-    border: 2px solid var(--bad);
-    background: transparent;
-    color: var(--bad);
-    font: 700 1.1rem var(--sans);
-    letter-spacing: .1em;
+    border: 2px solid var(--red);
+    background: rgba(255, 59, 48, .1);
+    color: var(--red);
+    font: 700 .85rem var(--pixel);
+    letter-spacing: .14em;
     touch-action: none;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
   }
-  #fire.firing { background: var(--bad); color: var(--bg); }
-  #fire:disabled { opacity: .45; }
-  .middle { align-self: center; display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 0; }
-  .hint { margin: 0; color: var(--muted); font-size: .9rem; text-align: center; }
-  .tune { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .8rem; }
-  .tune input { width: min(34vw, 180px); accent-color: var(--accent); touch-action: pan-x; }
-  .tune output { min-width: 2ch; color: var(--fg); font: 650 .95rem var(--mono); }
+  #fire.firing { background: var(--red); color: var(--black); }
+  #fire:disabled { opacity: .35; }
 
-  footer { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; }
-  a { color: var(--accent); font-size: .85rem; }
-  @media (max-height: 420px) {
-    footer { display: none; } /* no room in landscape on a phone */
+  /* ---- being hurt: the edges of the screen flash red ---- */
+  #hurt {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 70px 24px var(--red);
+    opacity: 0;
+  }
+  #hurt.hit { animation: hurt .45s ease-out; }
+  @keyframes hurt { from { opacity: .9; } to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    #hurt.hit { animation-duration: .01s; }
+  }
+
+  /* ---- menu ---- */
+  #menu {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: rgba(6, 8, 10, .86);
+    overflow-y: auto;
+    touch-action: pan-y;
+  }
+  #menu[hidden] { display: none; }
+  .panel {
+    width: min(100%, 430px);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--glass);
+  }
+  h1 { margin: 0; font: 700 1.5rem var(--pixel); letter-spacing: .04em; }
+  #status { margin: 0; color: var(--dim); min-height: 1.4em; }
+  #status.bad { color: var(--red); }
+  .row { display: flex; gap: 8px; }
+  .btn {
+    flex: 1;
+    padding: 11px 10px;
+    border: 1px solid var(--white);
+    border-radius: 4px;
+    background: var(--white);
+    color: var(--black);
+    font: 700 .8rem var(--pixel);
+    letter-spacing: .08em;
+  }
+  .btn.quiet { background: transparent; color: var(--white); border-color: var(--line); }
+  .btn:disabled { opacity: .35; }
+  .btn[hidden] { display: none; }
+  .tune { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: .85rem; }
+  .tune input { flex: 1; min-width: 0; accent-color: var(--white); touch-action: pan-x; }
+  .tune output { min-width: 2ch; color: var(--white); font: 700 1rem var(--pixel); text-align: right; }
+  .help { margin: 0; color: var(--dim); font-size: .8rem; }
+  .links { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+  a { color: var(--dim); font-size: .8rem; }
+  @media (max-height: 380px) {
+    .help { display: none; } /* a phone on its side has little height to spare */
+    .panel { gap: 9px; padding: 12px 16px; }
   }
 </style>
 </head>
 <body>
-  <header>
-    <h1>CH582 Doom</h1>
-    <p id="status" role="status" aria-live="polite">Not connected</p>
-    <div class="buttons">
-      <button id="start" class="btn go" type="button" disabled>Start</button>
-      <button id="exit" class="btn quiet" type="button" disabled>Clock</button>
-      <button id="connect" class="btn" type="button">Connect</button>
-    </div>
-  </header>
+  <div id="moveZone">
+    <div id="stick"><div id="knob"></div><span class="tag" id="moveTag">MOVE</span></div>
+  </div>
+  <span class="tag" id="lookTag">DRAG TO LOOK</span>
 
-  <div class="stats">
-    <div><span>Health</span><strong id="health">0</strong></div>
-    <div><span>Ammo</span><strong id="ammo">0</strong></div>
-    <div><span>Kills</span><strong id="kills">0</strong></div>
-    <div><span id="gameState">Idle</span><strong id="level">-</strong></div>
+  <div class="hud">
+    <div class="stat"><span>HEALTH</span><strong id="health">0</strong></div>
+    <div class="stat"><span>AMMO</span><strong id="ammo">0</strong></div>
+    <div class="stat"><span>KILLS</span><strong id="kills">0</strong></div>
+    <div class="stat"><span>LEVEL</span><strong id="level">-</strong></div>
+    <button id="menuBtn" type="button" aria-controls="menu">MENU</button>
   </div>
 
-  <div class="pad">
-    <div class="side">
-      <div class="stick off" id="move" aria-label="Move stick"><div class="knob"></div></div>
-      <p>Move</p>
-    </div>
-    <div class="middle">
-      <p class="hint">Drag anywhere to turn</p>
+  <button id="fire" type="button" disabled>FIRE</button>
+  <div id="hurt"></div>
+
+  <div id="menu">
+    <div class="panel">
+      <h1 id="title">CH582 DOOM</h1>
+      <p id="status" role="status" aria-live="polite">Not connected</p>
+      <div class="row">
+        <button id="connect" class="btn" type="button">CONNECT</button>
+        <button id="start" class="btn" type="button" disabled>START</button>
+        <button id="exit" class="btn quiet" type="button" disabled>CLOCK</button>
+      </div>
       <label class="tune">Turn speed
         <input id="turnSpeed" type="range" min="1" max="20" step="1" value="5">
         <output id="turnSpeedValue" for="turnSpeed">5</output>
       </label>
-    </div>
-    <div class="side">
-      <button id="fire" type="button" disabled>FIRE</button>
-      <p>Hold to shoot, slide to aim</p>
+      <p class="help">Left thumb anywhere on the left moves. Drag anywhere else to look. Hold FIRE to shoot, and slide it to aim.</p>
+      <button id="resume" class="btn quiet" type="button" hidden>BACK TO THE GAME</button>
+      <div class="links">
+        <a href="../">LED and clock</a>
+        <a href="../snake/">Snake</a>
+        <a href="../maze/">Tilt Maze</a>
+        <a href="../racing/">Race</a>
+        <a href="../shooter/">Shooter</a>
+      </div>
     </div>
   </div>
-
-  <footer>
-    <a href="../">LED and brightness controls</a>
-    <a href="../snake/">Play Snake</a>
-    <a href="../maze/">Play Tilt Maze</a>
-    <a href="../racing/">Play Race</a>
-    <a href="../shooter/">Play Shooter</a>
-  </footer>
 
 <script>
   const SERVICE = 0xFFE0;
@@ -208,19 +264,14 @@
   const KEY_TURN_DEG_PER_S = 150;
   const SEND_INTERVAL_MS = 30;
 
-  const statusEl = document.getElementById('status');
-  const connectBtn = document.getElementById('connect');
-  const startBtn = document.getElementById('start');
-  const exitBtn = document.getElementById('exit');
-  const healthEl = document.getElementById('health');
-  const ammoEl = document.getElementById('ammo');
-  const killsEl = document.getElementById('kills');
-  const levelEl = document.getElementById('level');
-  const stateEl = document.getElementById('gameState');
-  const moveEl = document.getElementById('move');
-  const fireBtn = document.getElementById('fire');
-  const turnSpeedEl = document.getElementById('turnSpeed');
-  const turnSpeedValueEl = document.getElementById('turnSpeedValue');
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $('status'), titleEl = $('title'), menuEl = $('menu');
+  const connectBtn = $('connect'), startBtn = $('start'), exitBtn = $('exit');
+  const menuBtn = $('menuBtn'), resumeBtn = $('resume');
+  const healthEl = $('health'), ammoEl = $('ammo'), killsEl = $('kills'), levelEl = $('level');
+  const moveZone = $('moveZone'), stickEl = $('stick'), knobEl = $('knob');
+  const fireBtn = $('fire'), hurtEl = $('hurt');
+  const turnSpeedEl = $('turnSpeed'), turnSpeedValueEl = $('turnSpeedValue');
 
   let device = null;
   let cmdChar = null;
@@ -248,27 +299,41 @@
     statusEl.classList.toggle('bad', !!bad);
   }
 
+  // The menu covers the controls. It is up whenever there is no game to play.
+  function showMenu(open) {
+    menuEl.hidden = !open;
+    resumeBtn.hidden = !playing;
+  }
+
   function showGame(state, health, ammo, kills, level) {
-    if (playing && health < lastHealth && navigator.vibrate) navigator.vibrate(state === 2 ? 400 : 80);
+    const wasPlaying = playing;
+    if (wasPlaying && health < lastHealth) {
+      if (navigator.vibrate) navigator.vibrate(state === 2 ? 400 : 80);
+      hurtEl.classList.remove('hit');
+      void hurtEl.offsetWidth; // restart the flash if one is still fading
+      hurtEl.classList.add('hit');
+    }
     lastHealth = health;
     playing = state === 1;
+    document.body.classList.toggle('playing', playing);
     healthEl.textContent = health;
     healthEl.classList.toggle('low', playing && health <= 25);
     ammoEl.textContent = ammo;
     killsEl.textContent = kills;
     levelEl.textContent = level || '-';
-    stateEl.textContent = state === 1 ? 'Level' : state === 2 ? 'You died' : state === 3 ? 'You win' : 'Idle';
-    startBtn.textContent = state >= 2 ? 'Again' : state === 1 ? 'Restart' : 'Start';
+    titleEl.textContent = state === 2 ? 'YOU DIED' : state === 3 ? 'YOU WIN' : 'CH582 DOOM';
+    startBtn.textContent = state >= 2 ? 'AGAIN' : state === 1 ? 'RESTART' : 'START';
+    if (state >= 2) setStatus(kills + (kills === 1 ? ' kill' : ' kills') + ', reached level ' + level + '.');
+    if (playing !== wasPlaying) showMenu(!playing); // a game starting clears the screen; one ending brings the menu back
   }
 
   function showConnected(connected) {
     startBtn.disabled = !connected;
     exitBtn.disabled = !connected;
     fireBtn.disabled = !connected;
-    moveEl.classList.toggle('off', !connected);
-    connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
+    connectBtn.textContent = connected ? 'DISCONNECT' : 'CONNECT';
     connectBtn.classList.toggle('quiet', connected);
-    if (!connected) showGame(0, 0, 0, 0, 0);
+    if (!connected) { showGame(0, 0, 0, 0, 0); showMenu(true); }
   }
 
   function onDisconnected() {
@@ -278,11 +343,11 @@
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   }
 
-  // -1..1 with a dead zone in the middle; `curve` above 1 makes small movements finer
-  function shape(v, curve) {
+  // -1..1 with a dead zone in the middle
+  function shape(v) {
     const mag = Math.abs(v);
     if (mag < DEAD_ZONE) return 0;
-    return Math.sign(v) * Math.pow(Math.min(1, (mag - DEAD_ZONE) / (1 - DEAD_ZONE)), curve);
+    return Math.sign(v) * Math.min(1, (mag - DEAD_ZONE) / (1 - DEAD_ZONE));
   }
 
   const key = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
@@ -322,8 +387,8 @@
     try {
       await gatt(() => target.writeValueWithoutResponse(Int8Array.of(
         CMD_INPUT,
-        clamp((shape(move.x, 1) + key('d', 'a')) * 127),
-        clamp((-shape(move.y, 1) + key('w', 's')) * 127),
+        clamp((shape(move.x) + key('d', 'a')) * 127),
+        clamp((-shape(move.y) + key('w', 's')) * 127),
         turn,
         (firing || keys.has(' ')) ? BUTTON_FIRE : 0)));
     } catch (err) {
@@ -349,7 +414,7 @@
     if (navigator.wakeLock && !wakeLock) {
       navigator.wakeLock.request('screen').then((lock) => { wakeLock = lock; }).catch(() => {});
     }
-    // A gamepad wants the whole screen, sideways. This has to be asked for straight from the tap.
+    // A game wants the whole screen, sideways. This has to be asked for straight from the tap.
     if (!document.fullscreenElement && document.documentElement.requestFullscreen &&
         matchMedia('(pointer: coarse)').matches) {
       document.documentElement.requestFullscreen()
@@ -416,49 +481,62 @@
   });
   startBtn.addEventListener('click', start);
   exitBtn.addEventListener('click', () => command(CMD_EXIT));
+  menuBtn.addEventListener('click', () => showMenu(menuEl.hidden));
+  resumeBtn.addEventListener('click', () => showMenu(false));
 
-  // A stick follows the finger that pressed it, even when that finger slides off the circle
-  function makeStick(el, value, horizontalOnly) {
-    const knob = el.querySelector('.knob');
-    let pointer = null;
-
-    function set(x, y) {
-      value.x = x;
-      value.y = y;
-      knob.style.transform = 'translate(' + (x * 88) + '%, ' + (y * 88) + '%)';
-    }
-    function track(event) {
-      const r = el.getBoundingClientRect();
-      const reach = r.width * 0.32; // how far the knob can travel from the centre
-      let x = (event.clientX - (r.left + r.width / 2)) / reach;
-      let y = horizontalOnly ? 0 : (event.clientY - (r.top + r.height / 2)) / reach;
-      const mag = Math.hypot(x, y);
-      if (mag > 1) { x /= mag; y /= mag; }
-      set(x, y);
-    }
-    el.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      pointer = event.pointerId;
-      el.setPointerCapture(pointer);
-      track(event);
-    });
-    el.addEventListener('pointermove', (event) => {
-      if (event.pointerId === pointer) track(event);
-    });
-    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => {
-      el.addEventListener(type, (event) => {
-        if (event.pointerId === pointer) { pointer = null; set(0, 0); }
-      });
-    });
-    el.addEventListener('contextmenu', (event) => event.preventDefault());
+  // Move stick: it appears under the thumb, wherever in the move zone that lands, and follows
+  // that finger until it lifts. At rest it waits, dashed, in the bottom corner.
+  let movePointer = null, stickX = 0, stickY = 0;
+  function placeStick(x, y, held) {
+    const zone = moveZone.getBoundingClientRect();
+    const half = stickEl.offsetWidth / 2;
+    stickX = Math.max(zone.left + half, Math.min(zone.right - half, x));
+    stickY = Math.max(zone.top + half, Math.min(zone.bottom - half, y));
+    stickEl.style.left = (stickX - zone.left) + 'px';
+    stickEl.style.top = (stickY - zone.top) + 'px';
+    stickEl.classList.toggle('held', held);
   }
-  makeStick(moveEl, move, false);
+  function setMove(x, y) {
+    move.x = x;
+    move.y = y;
+    knobEl.style.transform = 'translate(' + (x * 70) + '%, ' + (y * 70) + '%)';
+  }
+  function restStick() {
+    const zone = moveZone.getBoundingClientRect();
+    placeStick(zone.left + zone.width * 0.42, zone.bottom - zone.height * 0.42, false);
+    setMove(0, 0);
+  }
+  function trackStick(event) {
+    const reach = stickEl.offsetWidth * 0.3; // how far the knob travels from the centre
+    let x = (event.clientX - stickX) / reach, y = (event.clientY - stickY) / reach;
+    const mag = Math.hypot(x, y);
+    if (mag > 1) { x /= mag; y /= mag; }
+    setMove(x, y);
+  }
+  moveZone.addEventListener('pointerdown', (event) => {
+    if (movePointer !== null) return;
+    event.preventDefault();
+    movePointer = event.pointerId;
+    moveZone.setPointerCapture(movePointer);
+    placeStick(event.clientX, event.clientY, true);
+    setMove(0, 0);
+  });
+  moveZone.addEventListener('pointermove', (event) => {
+    if (event.pointerId === movePointer) trackStick(event);
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => {
+    moveZone.addEventListener(type, (event) => {
+      if (event.pointerId === movePointer) { movePointer = null; restStick(); }
+    });
+  });
+  moveZone.addEventListener('contextmenu', (event) => event.preventDefault());
+  restStick();
+  window.addEventListener('resize', () => { if (movePointer === null) restStick(); });
 
-  // Look: any finger dragged across the screen turns the view, wherever it lands, apart from
-  // the move stick, the buttons, the turn speed slider and the links. Several fingers can do it at once.
+  // Look: any finger dragged across the rest of the screen turns the view. Several can at once.
   const lookPointers = new Map(); // pointer id -> last x position
   document.addEventListener('pointerdown', (event) => {
-    if (event.target.closest('.stick, button, a, label')) return;
+    if (event.target.closest('#moveZone, #menu, button, a')) return;
     lookPointers.set(event.pointerId, event.clientX);
   });
   document.addEventListener('pointermove', (event) => {
@@ -506,6 +584,7 @@
     const k = keyName(event);
     if (!GAME_KEYS.includes(k)) return;
     if (k === ' ' && event.target.tagName === 'BUTTON') return; // space presses the focused button
+    if (event.target.tagName === 'INPUT') return;               // arrows move the turn speed slider
     event.preventDefault();
     keys.add(k);
   });

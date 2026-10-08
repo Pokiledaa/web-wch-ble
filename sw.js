@@ -1,6 +1,6 @@
 // Caches the app shell so the installed app opens without a network connection.
 // Bump CACHE whenever a file below changes.
-const CACHE = 'ch582-led-v10';
+const CACHE = 'ch582-led-v11';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'snake/', 'snake/index.html', 'snake/manifest.webmanifest',
   'maze/', 'maze/index.html', 'maze/manifest.webmanifest',
@@ -24,7 +24,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    fetch(event.request)
+    // 'no-cache' asks the server every time: the host lets browsers keep pages for ten minutes,
+    // which made a freshly published page look as if it had not changed
+    fetch(event.request.url, { cache: 'no-cache' })
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE).then((cache) => cache.put(event.request, copy));
