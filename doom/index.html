@@ -139,6 +139,8 @@
     touch-action: none;
   }
   #fire.firing { background: var(--red); color: var(--black); }
+  #fire.knife { border-color: var(--white); background: rgba(220, 232, 255, .1); color: var(--white); }
+  #fire.knife.firing { background: var(--white); color: var(--black); }
   #fire:disabled { opacity: .35; }
   body.arranging #fire { border-style: dashed; background: rgba(255, 59, 48, .25); }
 
@@ -357,7 +359,11 @@
     document.body.classList.toggle('playing', playing);
     healthEl.textContent = health;
     healthEl.classList.toggle('low', playing && health <= 25);
-    ammoEl.textContent = (playing && ammo === 0) ? 'KNIFE' : ammo; // FIRE stabs when the bullets run out
+    // FIRE stabs when the bullets run out, and both the readout and the button say so
+    const knife = playing && ammo === 0;
+    ammoEl.textContent = knife ? 'KNIFE' : ammo;
+    fireBtn.textContent = knife ? 'STAB' : 'FIRE';
+    fireBtn.classList.toggle('knife', knife);
     killsEl.textContent = kills;
     levelEl.textContent = level || '-';
     titleEl.textContent = state === 2 ? 'YOU DIED' : state === 3 ? 'YOU WIN' : 'CH582 DOOM';
