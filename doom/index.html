@@ -159,10 +159,10 @@
     touch-action: none;
   }
   #aim.on { background: var(--white); color: var(--black); }
-  #aim:disabled, #nextGun:disabled { opacity: .35; }
+  #aim:disabled, #nextGun:disabled, #run:disabled { opacity: .35; }
 
-  /* ---- gun: tap to change to the next one you are carrying ---- */
-  #nextGun {
+  /* ---- gun: tap to change to the next one you are carrying; run: tap to run until you stop ---- */
+  #nextGun, #run {
     position: absolute;
     right: calc(max(26px, env(safe-area-inset-right) + 14px) + min(20vh, 72px) + 14px);
     top: max(64px, calc(env(safe-area-inset-top) + 56px));
@@ -175,6 +175,8 @@
     letter-spacing: .12em;
     touch-action: none;
   }
+  #run { right: calc(max(26px, env(safe-area-inset-right) + 14px) + 2 * (min(20vh, 72px) + 14px)); }
+  #run.on { background: var(--white); color: var(--black); border-color: var(--white); }
 
   /* ---- moving the FIRE button ---- */
   #arrange {
@@ -278,6 +280,7 @@
     <button id="menuBtn" type="button" aria-controls="menu">MENU</button>
   </div>
 
+  <button id="run" type="button" aria-pressed="false" disabled>RUN</button>
   <button id="nextGun" type="button" disabled>GUN</button>
   <button id="aim" type="button" aria-pressed="false" disabled>AIM</button>
   <button id="fire" type="button" disabled>FIRE</button>
@@ -310,7 +313,7 @@
         <input id="vibration" type="checkbox" checked>
         <span id="vibrationLabel">Vibrate when hit</span>
       </label>
-      <p class="help">Left thumb anywhere on the left moves. Drag anywhere else to look. Hold FIRE to shoot, and slide it to turn. Tap AIM to zoom in, GUN to change gun.</p>
+      <p class="help">Left thumb anywhere on the left moves. Drag anywhere else to look. Hold FIRE to shoot, and slide it to turn. Tap AIM to zoom in, GUN to change gun, RUN to run.</p>
       <button id="resume" class="btn quiet" type="button" hidden>BACK TO THE GAME</button>
       <div class="links">
         <a href="../">LED and clock</a>
@@ -328,7 +331,7 @@
   const STATE_CHAR = 0xFFE4; // notification {state, health, ammo, kills, level}
   const TIME_CHAR = 0xFFE5;  // {hour, minute, second}
   const CMD_EXIT = 0, CMD_START = 5, CMD_INPUT = 7;
-  const BUTTON_FIRE = 1, BUTTON_AIM = 2, BUTTON_NEXT = 4;
+  const BUTTON_FIRE = 1, BUTTON_AIM = 2, BUTTON_NEXT = 4, BUTTON_RUN = 8;
   const WEAPONS = ['PISTOL', 'SHOTGUN', 'CHAINGUN', 'KNIFE']; // as the board numbers them
   const KNIFE = 3;
   const DEAD_ZONE = 0.12;       // fraction of the stick's travel that counts as centred
@@ -345,7 +348,7 @@
   const healthEl = $('health'), ammoEl = $('ammo'), killsEl = $('kills'), levelEl = $('level');
   const moveZone = $('moveZone'), stickEl = $('stick'), knobEl = $('knob');
   const fireBtn = $('fire'), aimBtn = $('aim'), nextGunBtn = $('nextGun'), hurtEl = $('hurt');
-  const weaponEl = $('weapon');
+  const weaponEl = $('weapon'), runBtn = $('run');
   const turnSpeedEl = $('turnSpeed'), turnSpeedValueEl = $('turnSpeedValue');
   const fireSizeEl = $('fireSize'), moveFireBtn = $('moveFire'), arrangeEl = $('arrange');
 
@@ -363,6 +366,7 @@
   let lastSendTime = performance.now();
   let firing = false;
   let aiming = false;     // looking down the sights: the board zooms the view
+  let running = false;    // running until the move stick is let go
   let nextGunTaps = 0;    // taps on GUN not yet told to the board
   let nextGunSent = false; // the last packet carried one, so this one must not
   const keys = new Set();
@@ -404,6 +408,8 @@
     ammoEl.textContent = ammo;
     weaponEl.textContent = playing ? (WEAPONS[weapon] || 'AMMO') : 'AMMO';
     nextGunBtn.disabled = !playing;
+    runBtn.disabled = !playing;
+    if (!playing) setRunning(false);
     fireBtn.textContent = knife ? 'STAB' : 'FIRE';
     fireBtn.classList.toggle('knife', knife);
     aimBtn.disabled = !playing || knife; // the sights belong to the pistol
@@ -501,7 +507,7 @@
         clamp((-shape(move.y) + key('w', 's')) * 127),
         turn,
         ((firing || keys.has(' ')) ? BUTTON_FIRE : 0) | ((aiming || keys.has('Shift')) ? BUTTON_AIM : 0) |
-        (next ? BUTTON_NEXT : 0))));
+        (next ? BUTTON_NEXT : 0) | ((running || keys.has('Control')) ? BUTTON_RUN : 0))));
       if (next) nextGunTaps--;
       nextGunSent = next;
     } catch (err) {
@@ -640,7 +646,7 @@
   });
   ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => {
     moveZone.addEventListener(type, (event) => {
-      if (event.pointerId === movePointer) { movePointer = null; restStick(); }
+      if (event.pointerId === movePointer) { movePointer = null; restStick(); setRunning(false); }
     });
   });
   moveZone.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -714,6 +720,19 @@
   });
   aimBtn.addEventListener('contextmenu', (event) => event.preventDefault());
 
+  // RUN is a switch like AIM, and switches itself off when the move stick is let go
+  function setRunning(on) {
+    running = on;
+    runBtn.classList.toggle('on', on);
+    runBtn.setAttribute('aria-pressed', on);
+  }
+  runBtn.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    setRunning(!running);
+    sendInput();
+  });
+  runBtn.addEventListener('contextmenu', (event) => event.preventDefault());
+
   nextGunBtn.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     nextGunTaps++;
@@ -769,8 +788,8 @@
     saveFireLayout();
   });
 
-  // Keyboard, for trying it from a laptop: W A S D to move, left and right arrows (or dragging the mouse) to turn, space to fire, hold Shift to aim
-  const GAME_KEYS = ['w', 'a', 's', 'd', 'ArrowLeft', 'ArrowRight', ' ', 'Shift'];
+  // Keyboard, for trying it from a laptop: W A S D to move, left and right arrows (or dragging the mouse) to turn, space to fire, hold Shift to aim, hold Control to run
+  const GAME_KEYS = ['w', 'a', 's', 'd', 'ArrowLeft', 'ArrowRight', ' ', 'Shift', 'Control'];
   const keyName = (event) => (event.key.length === 1 ? event.key.toLowerCase() : event.key);
   window.addEventListener('keydown', (event) => {
     const k = keyName(event);
