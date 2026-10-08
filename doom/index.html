@@ -219,6 +219,7 @@
   .btn[hidden] { display: none; }
   .tune { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: .85rem; }
   .tune input { flex: 1; min-width: 0; accent-color: var(--white); touch-action: pan-x; }
+  .tune input[type=checkbox] { flex: none; width: 20px; height: 20px; margin: 0; }
   .tune output { min-width: 2ch; color: var(--white); font: 700 1rem var(--pixel); text-align: right; }
   .help { margin: 0; color: var(--dim); font-size: .8rem; }
   .links { display: flex; flex-wrap: wrap; gap: 2px 14px; }
@@ -268,6 +269,10 @@
       <label class="tune">FIRE size
         <input id="fireSize" type="range" min="60" max="180" step="10" value="100">
         <button id="moveFire" class="btn quiet" type="button" style="flex: none">MOVE FIRE</button>
+      </label>
+      <label class="tune">
+        <input id="vibration" type="checkbox" checked>
+        <span id="vibrationLabel">Vibrate when hit</span>
       </label>
       <p class="help">Left thumb anywhere on the left moves. Drag anywhere else to look. Hold FIRE to shoot, and slide it to aim.</p>
       <button id="resume" class="btn quiet" type="button" hidden>BACK TO THE GAME</button>
@@ -341,7 +346,8 @@
   function showGame(state, health, ammo, kills, level) {
     const wasPlaying = playing;
     if (wasPlaying && health < lastHealth) {
-      if (navigator.vibrate) navigator.vibrate(state === 2 ? 400 : 80);
+      // A harder hit buzzes longer (imps take 3 to 24 health); dying is a long double buzz
+      buzz(state === 2 ? [300, 80, 500] : Math.min(400, 120 + (lastHealth - health) * 10));
       hurtEl.classList.remove('hit');
       void hurtEl.offsetWidth; // restart the flash if one is still fading
       hurtEl.classList.add('hit');
@@ -385,6 +391,24 @@
 
   const key = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
   const clamp = (v) => Math.max(-127, Math.min(127, Math.round(v)));
+
+  // Vibration can be switched off, and switching it on buzzes once so the player can tell
+  // whether this phone and browser will do it at all
+  const vibrationEl = $('vibration');
+  function buzz(pattern) {
+    if (vibrationEl.checked && navigator.vibrate) navigator.vibrate(pattern);
+  }
+  if (!navigator.vibrate) {
+    vibrationEl.checked = false;
+    vibrationEl.disabled = true;
+    $('vibrationLabel').textContent = 'This browser cannot vibrate the phone';
+  } else {
+    try { vibrationEl.checked = localStorage.getItem('doomVibration') !== '0'; } catch (err) { /* on by default */ }
+    vibrationEl.addEventListener('change', () => {
+      try { localStorage.setItem('doomVibration', vibrationEl.checked ? '1' : '0'); } catch (err) { /* not remembered */ }
+      buzz(200);
+    });
+  }
 
   // Turn speed is the player's own setting, kept on this phone between visits
   let lookDegPerPx = 0;
