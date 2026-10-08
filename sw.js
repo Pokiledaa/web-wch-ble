@@ -1,6 +1,6 @@
 // Caches the app shell so the installed app opens without a network connection.
 // Bump CACHE whenever a file below changes.
-const CACHE = 'ch582-led-v8';
+const CACHE = 'ch582-led-v9';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'snake/', 'snake/index.html', 'snake/manifest.webmanifest',
   'maze/', 'maze/index.html', 'maze/manifest.webmanifest',
