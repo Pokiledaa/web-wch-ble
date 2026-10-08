@@ -1,6 +1,6 @@
 {
-  "name": "CH582 Doom",
-  "short_name": "CH582 Doom",
+  "name": "Claude Doom",
+  "short_name": "Claude Doom",
   "description": "Play a Doom-style shooter on a WCH CH582 board's OLED, with the phone as a two-stick controller.",
   "start_url": "./",
   "scope": "./",

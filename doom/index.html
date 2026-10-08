@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#06080a">
-<title>CH582 Doom</title>
+<title>Claude Doom</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
@@ -257,7 +257,7 @@
 
   <div id="menu">
     <div class="panel">
-      <h1 id="title">CH582 DOOM</h1>
+      <h1 id="title">CLAUDE DOOM</h1>
       <p id="status" role="status" aria-live="polite">Not connected</p>
       <div class="row">
         <button id="connect" class="btn" type="button">CONNECT</button>
@@ -366,7 +366,7 @@
     fireBtn.classList.toggle('knife', knife);
     killsEl.textContent = kills;
     levelEl.textContent = level || '-';
-    titleEl.textContent = state === 2 ? 'YOU DIED' : state === 3 ? 'YOU WIN' : 'CH582 DOOM';
+    titleEl.textContent = state === 2 ? 'YOU DIED' : state === 3 ? 'YOU WIN' : 'CLAUDE DOOM';
     startBtn.textContent = state >= 2 ? 'AGAIN' : state === 1 ? 'RESTART' : 'START';
     if (state >= 2) setStatus(kills + (kills === 1 ? ' kill' : ' kills') + ', reached level ' + level + '.');
     if (playing !== wasPlaying) showMenu(!playing); // a game starting clears the screen; one ending brings the menu back
@@ -498,7 +498,7 @@
     try {
       setStatus('Choose the board in the list…');
       device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'CH582' }],
+        filters: [{ namePrefix: 'Claude' }, { namePrefix: 'CH582' }], // the old name, for phones that remember it
         optionalServices: [SERVICE]
       });
       device.addEventListener('gattserverdisconnected', onDisconnected);
